@@ -216,6 +216,8 @@ fn parse_vector(
 
     let mut vector = Vec::with_capacity(vector_bytes.len() / 4);
     for chunk in vector_bytes.chunks_exact(4) {
+        // Decode raw lanes directly to preserve exact f32 bit patterns
+        // (including signed zero and NaN payloads).
         let mut tmp = [0_u8; 4];
         tmp.copy_from_slice(chunk);
         vector.push(f32::from_le_bytes(tmp));
@@ -451,8 +453,12 @@ impl BatchBuffer {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::fs::File;
     use std::io::Write;
 
+    use arrow_array::{BooleanArray, FixedSizeListArray, Float32Array, UInt64Array};
+    use arrow_ipc::reader::FileReader as ArrowIpcFileReader;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use proptest::prelude::*;
     use serde::Serialize;
     use tempfile::tempdir;
@@ -630,7 +636,7 @@ mod tests {
             (count, extra_capacity, rows) in
                 (1usize..48, 0usize..16).prop_flat_map(|(count, extra_capacity)| {
                     prop::collection::vec(
-                        (prop::collection::vec(-10_000.0f32..10_000.0f32, 1usize..17), any::<bool>()),
+                        (prop::collection::vec(any::<u32>(), 1usize..17), any::<bool>()),
                         count
                     )
                     .prop_map(move |rows| (count, extra_capacity, rows))
@@ -641,7 +647,8 @@ mod tests {
             let fixture_records: Vec<FixtureRecord> = rows
                 .into_iter()
                 .enumerate()
-                .map(|(idx, (mut vector, deleted))| {
+                .map(|(idx, (vector_bits, deleted))| {
+                    let mut vector: Vec<f32> = vector_bits.into_iter().map(f32::from_bits).collect();
                     // Force a stable fixed dimension per generated case.
                     if vector.len() > dimension {
                         vector.truncate(dimension);
@@ -681,7 +688,7 @@ mod tests {
                 let source = &fixture_records[exported.internal_id as usize];
                 prop_assert!(!source.deleted);
                 prop_assert_eq!(exported.label, source.label);
-                prop_assert_eq!(&exported.vector, &source.vector);
+                prop_assert_eq!(f32_bits(&exported.vector), f32_bits(&source.vector));
                 prop_assert!(!exported.deleted);
             }
 
@@ -706,10 +713,187 @@ mod tests {
             for exported in &exported_with_deleted {
                 let source = &fixture_records[exported.internal_id as usize];
                 prop_assert_eq!(exported.label, source.label);
-                prop_assert_eq!(&exported.vector, &source.vector);
+                prop_assert_eq!(f32_bits(&exported.vector), f32_bits(&source.vector));
                 prop_assert_eq!(exported.deleted, source.deleted);
             }
         }
+    }
+
+    #[test]
+    fn columnar_exports_preserve_f32_bits_verbatim() {
+        let tmp = tempdir().expect("tempdir");
+        let records = vec![
+            FixtureRecord {
+                label: 10,
+                vector: vec![
+                    f32::from_bits(0x8000_0000), // -0.0
+                    f32::from_bits(0x0000_0001), // smallest subnormal
+                    f32::from_bits(0x7f80_0000), // +inf
+                    f32::from_bits(0xff80_0000), // -inf
+                    f32::from_bits(0x7fc0_0001), // NaN payload
+                ],
+                deleted: false,
+            },
+            FixtureRecord {
+                label: 20,
+                vector: vec![
+                    f32::from_bits(0x3f80_0000), // 1.0
+                    f32::from_bits(0xbf80_0000), // -1.0
+                    f32::from_bits(0x7f7f_ffff), // max finite
+                    f32::from_bits(0x0080_0000), // min normal
+                    f32::from_bits(0x7fa0_0001), // signaling-ish NaN payload bits
+                ],
+                deleted: true,
+            },
+        ];
+        write_fixture(tmp.path(), &records).expect("fixture");
+
+        let parquet_path = tmp.path().join("verbatim.parquet");
+        let arrow_path = tmp.path().join("verbatim.arrow");
+
+        extract_index_to_columnar(
+            tmp.path(),
+            &parquet_path,
+            OutputFormat::Parquet,
+            &ExtractOptions {
+                include_deleted: true,
+                metadata: None,
+            },
+            16,
+        )
+        .expect("parquet export");
+        extract_index_to_columnar(
+            tmp.path(),
+            &arrow_path,
+            OutputFormat::ArrowIpc,
+            &ExtractOptions {
+                include_deleted: true,
+                metadata: None,
+            },
+            16,
+        )
+        .expect("arrow export");
+
+        let parquet_rows = read_parquet_export(&parquet_path).expect("read parquet");
+        let arrow_rows = read_arrow_export(&arrow_path).expect("read arrow");
+
+        assert_eq!(parquet_rows.len(), records.len());
+        assert_eq!(arrow_rows.len(), records.len());
+
+        for (idx, source) in records.iter().enumerate() {
+            let expected_internal = idx as u64;
+
+            let parquet = &parquet_rows[idx];
+            assert_eq!(parquet.internal_id, expected_internal);
+            assert_eq!(parquet.label, source.label);
+            assert_eq!(parquet.deleted, source.deleted);
+            assert_eq!(f32_bits(&parquet.vector), f32_bits(&source.vector));
+
+            let arrow = &arrow_rows[idx];
+            assert_eq!(arrow.internal_id, expected_internal);
+            assert_eq!(arrow.label, source.label);
+            assert_eq!(arrow.deleted, source.deleted);
+            assert_eq!(f32_bits(&arrow.vector), f32_bits(&source.vector));
+        }
+    }
+
+    #[derive(Debug)]
+    struct ExportRow {
+        internal_id: u64,
+        label: u64,
+        deleted: bool,
+        vector: Vec<f32>,
+    }
+
+    fn read_parquet_export(path: &Path) -> Result<Vec<ExportRow>, ExtractError> {
+        let file = File::open(path)?;
+        let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+        let mut rows = Vec::new();
+        for batch in &mut reader {
+            rows.extend(read_export_batch(&batch?)?);
+        }
+        Ok(rows)
+    }
+
+    fn read_arrow_export(path: &Path) -> Result<Vec<ExportRow>, ExtractError> {
+        let file = File::open(path)?;
+        let mut reader = ArrowIpcFileReader::try_new(file, None)?;
+        let mut rows = Vec::new();
+        for batch in &mut reader {
+            rows.extend(read_export_batch(&batch?)?);
+        }
+        Ok(rows)
+    }
+
+    fn read_export_batch(batch: &RecordBatch) -> Result<Vec<ExportRow>, ExtractError> {
+        let schema = batch.schema();
+        let internal_id_idx = schema
+            .index_of("internal_id")
+            .map_err(|_| ExtractError::CorruptIndex("missing internal_id column".to_string()))?;
+        let label_idx = schema
+            .index_of("label")
+            .map_err(|_| ExtractError::CorruptIndex("missing label column".to_string()))?;
+        let deleted_idx = schema
+            .index_of("deleted")
+            .map_err(|_| ExtractError::CorruptIndex("missing deleted column".to_string()))?;
+        let vector_idx = schema
+            .index_of("vector")
+            .map_err(|_| ExtractError::CorruptIndex("missing vector column".to_string()))?;
+
+        let internal_ids = batch
+            .column(internal_id_idx)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .ok_or_else(|| {
+                ExtractError::CorruptIndex("internal_id column must be uint64".to_string())
+            })?;
+        let labels = batch
+            .column(label_idx)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .ok_or_else(|| ExtractError::CorruptIndex("label column must be uint64".to_string()))?;
+        let deleted = batch
+            .column(deleted_idx)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .ok_or_else(|| ExtractError::CorruptIndex("deleted column must be bool".to_string()))?;
+        let vectors = batch
+            .column(vector_idx)
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .ok_or_else(|| {
+                ExtractError::CorruptIndex("vector column must be fixed_size_list".to_string())
+            })?;
+        let values = vectors
+            .values()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or_else(|| {
+                ExtractError::CorruptIndex("vector values must be float32".to_string())
+            })?;
+
+        let dim = usize::try_from(vectors.value_length())
+            .map_err(|_| ExtractError::CorruptIndex("invalid vector dimension".to_string()))?;
+        let mut out = Vec::with_capacity(batch.num_rows());
+        for row in 0..batch.num_rows() {
+            let start = row * dim;
+            let end = start + dim;
+            let mut vector = Vec::with_capacity(dim);
+            for idx in start..end {
+                vector.push(values.value(idx));
+            }
+            out.push(ExportRow {
+                internal_id: internal_ids.value(row),
+                label: labels.value(row),
+                deleted: deleted.value(row),
+                vector,
+            });
+        }
+        Ok(out)
+    }
+
+    fn f32_bits(values: &[f32]) -> Vec<u32> {
+        values.iter().map(|v| v.to_bits()).collect()
     }
 
     fn write_fixture(dir: &Path, records: &[FixtureRecord]) -> Result<(), ExtractError> {

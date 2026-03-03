@@ -6,6 +6,9 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::extractor::{extract_index_to_columnar, ExtractOptions, ExtractSummary, OutputFormat};
+use crate::importer::{
+    build_index_from_columnar, BuildOptions, BuildSummary, DistanceMetric, InputFormat,
+};
 use crate::metadata::load_chroma_metadata;
 
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
@@ -30,6 +33,39 @@ struct ExtractResponse {
     output_path: String,
     output_format: OutputFormat,
     summary: ExtractSummary,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildRequest {
+    input_path: String,
+    output_path: String,
+    #[serde(default)]
+    input_format: Option<InputFormat>,
+    #[serde(default)]
+    metric: Option<DistanceMetric>,
+    #[serde(default)]
+    include_deleted: Option<bool>,
+    #[serde(default)]
+    m: Option<usize>,
+    #[serde(default)]
+    m0: Option<usize>,
+    #[serde(default)]
+    ef_construction: Option<usize>,
+    #[serde(default)]
+    batch_size: Option<usize>,
+    #[serde(default)]
+    capacity: Option<usize>,
+    #[serde(default)]
+    seed: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct BuildResponse {
+    input_path: String,
+    output_path: String,
+    input_format: InputFormat,
+    metric: DistanceMetric,
+    summary: BuildSummary,
 }
 
 /// Returns the library semantic version.
@@ -90,6 +126,27 @@ pub unsafe extern "C" fn hnsw_toolbox_extract_index(request_json: *const c_char)
     }
 }
 
+/// Builds a new HNSW index from a columnar Arrow IPC or Parquet export.
+///
+/// # Safety
+/// `request_json` must be a valid, null-terminated UTF-8 JSON string for the duration of this
+/// call.
+#[no_mangle]
+pub unsafe extern "C" fn hnsw_toolbox_build_index(request_json: *const c_char) -> *mut c_char {
+    let result = std::panic::catch_unwind(|| build_index_impl(request_json));
+    match result {
+        Ok(Ok(ptr)) => ptr,
+        Ok(Err(error_message)) => {
+            set_last_error_message(error_message);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error_message("panic during hnsw_toolbox_build_index");
+            ptr::null_mut()
+        }
+    }
+}
+
 unsafe fn extract_index_impl(request_json: *const c_char) -> Result<*mut c_char, String> {
     if request_json.is_null() {
         return Err("request_json is null".to_string());
@@ -136,6 +193,61 @@ unsafe fn extract_index_impl(request_json: *const c_char) -> Result<*mut c_char,
     let response = ExtractResponse {
         output_path: request.output_path,
         output_format,
+        summary,
+    };
+    let response_json = serde_json::to_string(&response).map_err(|e| e.to_string())?;
+
+    clear_last_error();
+    CString::new(response_json)
+        .map(CString::into_raw)
+        .map_err(|e| format!("failed to build CString response: {e}"))
+}
+
+unsafe fn build_index_impl(request_json: *const c_char) -> Result<*mut c_char, String> {
+    if request_json.is_null() {
+        return Err("request_json is null".to_string());
+    }
+
+    let request_json = CStr::from_ptr(request_json)
+        .to_str()
+        .map_err(|e| format!("request_json is not valid UTF-8: {e}"))?;
+
+    let request: BuildRequest = serde_json::from_str(request_json)
+        .map_err(|e| format!("request_json is not valid JSON: {e}"))?;
+
+    if request.input_path.trim().is_empty() {
+        return Err("input_path is required".to_string());
+    }
+    if request.output_path.trim().is_empty() {
+        return Err("output_path is required".to_string());
+    }
+
+    let input_format = request.input_format.unwrap_or_default();
+    let metric = request.metric.unwrap_or_default();
+    let options = BuildOptions {
+        include_deleted: request.include_deleted.unwrap_or(false),
+        input_format,
+        metric,
+        m: request.m.unwrap_or(16),
+        m0: request.m0,
+        ef_construction: request.ef_construction.unwrap_or(200),
+        batch_size: request.batch_size.unwrap_or(1024),
+        capacity: request.capacity,
+        seed: request.seed,
+    };
+
+    let summary = build_index_from_columnar(
+        Path::new(&request.input_path),
+        Path::new(&request.output_path),
+        &options,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let response = BuildResponse {
+        input_path: request.input_path,
+        output_path: request.output_path,
+        input_format,
+        metric,
         summary,
     };
     let response_json = serde_json::to_string(&response).map_err(|e| e.to_string())?;

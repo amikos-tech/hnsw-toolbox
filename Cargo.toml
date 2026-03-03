@@ -10,6 +10,7 @@ crate-type = ["rlib", "cdylib"]
 arrow-array = "54.2"
 arrow-ipc = "54.2"
 arrow-schema = "54.2"
+fast-hnsw = "1.0.0"
 parquet = { version = "54.2", features = ["arrow"] }
 serde = { version = "1.0", features = ["derive"] }
 serde-pickle = "1.2"

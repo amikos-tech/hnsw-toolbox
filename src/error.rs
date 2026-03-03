@@ -37,4 +37,7 @@ pub enum ExtractError {
 
     #[error("required file missing: {0}")]
     MissingFile(PathBuf),
+
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }

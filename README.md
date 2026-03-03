@@ -25,6 +25,20 @@ Output format:
 - `parquet`
 - `arrow_ipc`
 
+## What It Builds
+
+From a columnar export (`parquet` or `arrow_ipc`) containing at least:
+
+- `vector` (fixed-size list/list of float32/float64)
+- optional `label` (otherwise falls back to `internal_id`, then row index)
+- optional `deleted` (bool/int)
+
+Build output:
+
+- A new persisted HNSW file (`.hnsw`) produced by the Rust `fast-hnsw` format.
+
+Note: this build output is not Chroma/hnswlib's native persistence layout (`header.bin`, `data_level0.bin`, ...).
+
 ## Build
 
 ```bash
@@ -49,12 +63,16 @@ Dynamic library output (platform-specific):
 Use `extract_index(...)` for record-by-record streaming callbacks, or
 `extract_index_to_columnar(...)` for file output.
 
+Use `build_index_from_columnar(...)` to build a new HNSW index file from
+Parquet/Arrow exports.
+
 ## FFI API
 
 ### Exported Symbols
 
 - `hnsw_toolbox_version() -> *const c_char`
 - `hnsw_toolbox_extract_index(request_json: *const c_char) -> *mut c_char`
+- `hnsw_toolbox_build_index(request_json: *const c_char) -> *mut c_char`
 - `hnsw_toolbox_get_last_error() -> *const c_char`
 - `hnsw_toolbox_free_string(ptr: *mut c_char)`
 
@@ -88,6 +106,44 @@ Use `extract_index(...)` for record-by-record streaming callbacks, or
 }
 ```
 
+### Build Request JSON
+
+```json
+{
+  "input_path": "/tmp/extracted.parquet",
+  "output_path": "/tmp/rebuilt.hnsw",
+  "input_format": "parquet",
+  "metric": "euclidean",
+  "include_deleted": false,
+  "m": 16,
+  "m0": 32,
+  "ef_construction": 200,
+  "batch_size": 1024,
+  "capacity": 100000,
+  "seed": 42
+}
+```
+
+`input_format`: `"parquet"` or `"arrow_ipc"` (defaults to `"parquet"`).  
+`metric`: `"euclidean"`, `"squared_euclidean"`, `"cosine"`, `"dot_product"`, `"manhattan"` (defaults to `"euclidean"`).
+
+### Build Response JSON
+
+```json
+{
+  "input_path": "/tmp/extracted.parquet",
+  "output_path": "/tmp/rebuilt.hnsw",
+  "input_format": "parquet",
+  "metric": "euclidean",
+  "summary": {
+    "scanned": 10000,
+    "inserted": 8000,
+    "deleted_skipped": 2000,
+    "dimension": 384
+  }
+}
+```
+
 ## Go Usage (Purego, No CGO)
 
 ```go
@@ -111,6 +167,25 @@ if err != nil {
     panic(err)
 }
 _ = resp
+```
+
+Build a new index:
+
+```go
+buildResp, err := hnswtoolbox.BuildIndex(hnswtoolbox.BuildRequest{
+    InputPath:      "/tmp/extracted.parquet",
+    OutputPath:     "/tmp/rebuilt.hnsw",
+    InputFormat:    hnswtoolbox.InputFormatParquet,
+    Metric:         hnswtoolbox.DistanceMetricEuclidean,
+    IncludeDeleted: false,
+    M:              16,
+    EfConstruction: 200,
+    BatchSize:      1024,
+})
+if err != nil {
+    panic(err)
+}
+_ = buildResp
 ```
 
 ## Validation

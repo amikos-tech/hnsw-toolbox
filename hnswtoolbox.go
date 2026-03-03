@@ -18,6 +18,23 @@ const (
 	OutputFormatArrowIPC OutputFormat = "arrow_ipc"
 )
 
+type InputFormat string
+
+const (
+	InputFormatParquet  InputFormat = "parquet"
+	InputFormatArrowIPC InputFormat = "arrow_ipc"
+)
+
+type DistanceMetric string
+
+const (
+	DistanceMetricEuclidean        DistanceMetric = "euclidean"
+	DistanceMetricSquaredEuclidean DistanceMetric = "squared_euclidean"
+	DistanceMetricCosine           DistanceMetric = "cosine"
+	DistanceMetricDotProduct       DistanceMetric = "dot_product"
+	DistanceMetricManhattan        DistanceMetric = "manhattan"
+)
+
 type ExtractRequest struct {
 	IndexDir       string
 	OutputPath     string
@@ -40,6 +57,35 @@ type ExtractResponse struct {
 	Summary      ExtractSummary `json:"summary"`
 }
 
+type BuildRequest struct {
+	InputPath      string
+	OutputPath     string
+	InputFormat    InputFormat
+	Metric         DistanceMetric
+	IncludeDeleted bool
+	M              int
+	M0             *int
+	EfConstruction int
+	BatchSize      int
+	Capacity       *int
+	Seed           *uint64
+}
+
+type BuildSummary struct {
+	Scanned        uint64 `json:"scanned"`
+	Inserted       uint64 `json:"inserted"`
+	DeletedSkipped uint64 `json:"deleted_skipped"`
+	Dimension      int    `json:"dimension"`
+}
+
+type BuildResponse struct {
+	InputPath   string         `json:"input_path"`
+	OutputPath  string         `json:"output_path"`
+	InputFormat InputFormat    `json:"input_format"`
+	Metric      DistanceMetric `json:"metric"`
+	Summary     BuildSummary   `json:"summary"`
+}
+
 type extractPayload struct {
 	IndexDir       string       `json:"index_dir"`
 	OutputPath     string       `json:"output_path"`
@@ -47,6 +93,20 @@ type extractPayload struct {
 	MetadataPath   *string      `json:"metadata_path,omitempty"`
 	IncludeDeleted bool         `json:"include_deleted,omitempty"`
 	BatchSize      int          `json:"batch_size,omitempty"`
+}
+
+type buildPayload struct {
+	InputPath      string         `json:"input_path"`
+	OutputPath     string         `json:"output_path"`
+	InputFormat    InputFormat    `json:"input_format,omitempty"`
+	Metric         DistanceMetric `json:"metric,omitempty"`
+	IncludeDeleted bool           `json:"include_deleted,omitempty"`
+	M              int            `json:"m,omitempty"`
+	M0             *int           `json:"m0,omitempty"`
+	EfConstruction int            `json:"ef_construction,omitempty"`
+	BatchSize      int            `json:"batch_size,omitempty"`
+	Capacity       *int           `json:"capacity,omitempty"`
+	Seed           *uint64        `json:"seed,omitempty"`
 }
 
 var (
@@ -57,6 +117,7 @@ var (
 	loaded    bool
 
 	fnExtractIndex func(*byte) *byte
+	fnBuildIndex   func(*byte) *byte
 	fnLastError    func() *byte
 	fnFreeCString  func(*byte)
 	fnVersion      func() *byte
@@ -79,6 +140,10 @@ func Init(libraryPath string) error {
 	}
 
 	if err := register(handle, &fnExtractIndex, "hnsw_toolbox_extract_index"); err != nil {
+		_ = purego.Dlclose(handle)
+		return err
+	}
+	if err := register(handle, &fnBuildIndex, "hnsw_toolbox_build_index"); err != nil {
 		_ = purego.Dlclose(handle)
 		return err
 	}
@@ -185,6 +250,59 @@ func ExtractIndex(request ExtractRequest) (*ExtractResponse, error) {
 	var response ExtractResponse
 	if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
 		return nil, fmt.Errorf("failed to parse extract response: %w", err)
+	}
+	return &response, nil
+}
+
+func BuildIndex(request BuildRequest) (*BuildResponse, error) {
+	if err := ensureLoaded(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.InputPath) == "" {
+		return nil, errors.New("InputPath is required")
+	}
+	if strings.TrimSpace(request.OutputPath) == "" {
+		return nil, errors.New("OutputPath is required")
+	}
+
+	payload := buildPayload{
+		InputPath:      request.InputPath,
+		OutputPath:     request.OutputPath,
+		InputFormat:    request.InputFormat,
+		Metric:         request.Metric,
+		IncludeDeleted: request.IncludeDeleted,
+		M:              request.M,
+		M0:             request.M0,
+		EfConstruction: request.EfConstruction,
+		BatchSize:      request.BatchSize,
+		Capacity:       request.Capacity,
+		Seed:           request.Seed,
+	}
+
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal build request: %w", err)
+	}
+	cPayload := append(rawPayload, 0)
+
+	callMu.Lock()
+	responsePtr := fnBuildIndex(&cPayload[0])
+	if responsePtr == nil {
+		errorMessage := goStringFromPtr(fnLastError())
+		callMu.Unlock()
+		if strings.TrimSpace(errorMessage) == "" {
+			errorMessage = "hnsw_toolbox_build_index failed without error message"
+		}
+		return nil, errors.New(errorMessage)
+	}
+
+	responseJSON := goStringFromPtr(responsePtr)
+	fnFreeCString(responsePtr)
+	callMu.Unlock()
+
+	var response BuildResponse
+	if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
+		return nil, fmt.Errorf("failed to parse build response: %w", err)
 	}
 	return &response, nil
 }
