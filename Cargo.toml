@@ -1,0 +1,21 @@
+[package]
+name = "hnsw-toolbox"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+arrow-array = "54.2"
+arrow-ipc = "54.2"
+arrow-schema = "54.2"
+parquet = { version = "54.2", features = ["arrow"] }
+serde = { version = "1.0", features = ["derive"] }
+serde-pickle = "1.2"
+serde_json = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+proptest = "1.6"
+tempfile = "3.15"
