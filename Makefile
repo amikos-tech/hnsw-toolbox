@@ -1,5 +1,8 @@
 .PHONY: build build-debug build-release clean test test-go test-rust test-all lint lint-go lint-rust fmt fmt-go fmt-rust help
 
+GOLANGCI_LINT_VERSION := v2.5.0
+GOLANGCI_LINT_CMD := go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+
 UNAME_S := $(shell uname -s 2>/dev/null || echo UNKNOWN)
 OS_ENV := $(OS)
 
@@ -106,7 +109,7 @@ test-all: test-go test-rust
 lint: lint-go lint-rust
 
 lint-go:
-	golangci-lint run ./...
+	$(GOLANGCI_LINT_CMD) run --timeout=5m ./...
 
 lint-rust:
 	cargo clippy --locked --all-targets -- -D warnings

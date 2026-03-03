@@ -265,19 +265,7 @@ func BuildIndex(request BuildRequest) (*BuildResponse, error) {
 		return nil, errors.New("OutputPath is required")
 	}
 
-	payload := buildPayload{
-		InputPath:      request.InputPath,
-		OutputPath:     request.OutputPath,
-		InputFormat:    request.InputFormat,
-		Metric:         request.Metric,
-		IncludeDeleted: request.IncludeDeleted,
-		M:              request.M,
-		M0:             request.M0,
-		EfConstruction: request.EfConstruction,
-		BatchSize:      request.BatchSize,
-		Capacity:       request.Capacity,
-		Seed:           request.Seed,
-	}
+	payload := buildPayload(request)
 
 	rawPayload, err := json.Marshal(payload)
 	if err != nil {
