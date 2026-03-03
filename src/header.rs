@@ -155,7 +155,9 @@ impl PersistentHeader {
             )));
         }
         let vector_bytes = self.label_offset - self.offset_data;
-        if vector_bytes == 0 || vector_bytes % std::mem::size_of::<f32>() as u64 != 0 {
+        if vector_bytes == 0
+            || !vector_bytes.is_multiple_of(std::mem::size_of::<f32>() as u64)
+        {
             return Err(ExtractError::InvalidHeader(format!(
                 "invalid vector payload size {}; must be a positive multiple of 4",
                 vector_bytes
