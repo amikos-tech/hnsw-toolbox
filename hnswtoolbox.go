@@ -44,11 +44,21 @@ type ExtractRequest struct {
 	BatchSize      int
 }
 
+type ExtractIndexProperties struct {
+	M                uint64 `json:"m"`
+	EfConstruction   uint64 `json:"ef_construction"`
+	CurElementCount  uint64 `json:"cur_element_count"`
+	MaxElements      uint64 `json:"max_elements"`
+	PersistedVersion int32  `json:"persisted_version"`
+	WordSizeBytes    int    `json:"word_size_bytes"`
+}
+
 type ExtractSummary struct {
-	Scanned        uint64 `json:"scanned"`
-	Emitted        uint64 `json:"emitted"`
-	DeletedSkipped uint64 `json:"deleted_skipped"`
-	Dimension      int    `json:"dimension"`
+	Scanned         uint64                 `json:"scanned"`
+	Emitted         uint64                 `json:"emitted"`
+	DeletedSkipped  uint64                 `json:"deleted_skipped"`
+	Dimension       int                    `json:"dimension"`
+	IndexProperties ExtractIndexProperties `json:"index_properties"`
 }
 
 type ExtractResponse struct {

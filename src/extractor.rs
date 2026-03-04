@@ -32,11 +32,22 @@ pub struct ExtractOptions {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ExtractIndexProperties {
+    pub m: u64,
+    pub ef_construction: u64,
+    pub cur_element_count: u64,
+    pub max_elements: u64,
+    pub persisted_version: i32,
+    pub word_size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtractSummary {
     pub scanned: u64,
     pub emitted: u64,
     pub deleted_skipped: u64,
     pub dimension: usize,
+    pub index_properties: ExtractIndexProperties,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +142,14 @@ where
         emitted: 0,
         deleted_skipped: 0,
         dimension: header.dimension(),
+        index_properties: ExtractIndexProperties {
+            m: header.m,
+            ef_construction: header.ef_construction,
+            cur_element_count: header.cur_element_count,
+            max_elements: header.max_elements,
+            persisted_version: header.persisted_version,
+            word_size_bytes: header.word_size.bytes(),
+        },
     };
 
     let delete_marker_offset = header.delete_marker_offset();
@@ -506,6 +525,12 @@ mod tests {
         assert_eq!(summary.emitted, 2);
         assert_eq!(summary.deleted_skipped, 1);
         assert_eq!(summary.dimension, 3);
+        assert_eq!(summary.index_properties.m, 4);
+        assert_eq!(summary.index_properties.ef_construction, 100);
+        assert_eq!(summary.index_properties.cur_element_count, 3);
+        assert_eq!(summary.index_properties.max_elements, 3);
+        assert_eq!(summary.index_properties.persisted_version, 1);
+        assert_eq!(summary.index_properties.word_size_bytes, 8);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].label, 10);
         assert_eq!(out[1].label, 30);
@@ -683,6 +708,18 @@ mod tests {
                 summary_without_deleted.deleted_skipped,
                 fixture_records.len() as u64 - expected_non_deleted
             );
+            prop_assert_eq!(summary_without_deleted.index_properties.m, 4);
+            prop_assert_eq!(summary_without_deleted.index_properties.ef_construction, 100);
+            prop_assert_eq!(
+                summary_without_deleted.index_properties.cur_element_count,
+                fixture_records.len() as u64
+            );
+            prop_assert_eq!(
+                summary_without_deleted.index_properties.max_elements,
+                capacity as u64
+            );
+            prop_assert_eq!(summary_without_deleted.index_properties.persisted_version, 1);
+            prop_assert_eq!(summary_without_deleted.index_properties.word_size_bytes, 8);
 
             for exported in &exported_without_deleted {
                 let source = &fixture_records[exported.internal_id as usize];

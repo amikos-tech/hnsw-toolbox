@@ -7,8 +7,8 @@ pub mod metadata;
 
 pub use error::ExtractError;
 pub use extractor::{
-    extract_index, extract_index_to_columnar, ExtractOptions, ExtractSummary, ExtractedRecord,
-    OutputFormat,
+    extract_index, extract_index_to_columnar, ExtractIndexProperties, ExtractOptions,
+    ExtractSummary, ExtractedRecord, OutputFormat,
 };
 pub use header::{HeaderWordSize, PersistentHeader, HNSW_PERSISTENCE_VERSION};
 pub use importer::{
