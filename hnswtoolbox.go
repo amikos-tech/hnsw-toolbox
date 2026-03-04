@@ -50,7 +50,7 @@ type ExtractIndexProperties struct {
 	CurElementCount  uint64 `json:"cur_element_count"`
 	MaxElements      uint64 `json:"max_elements"`
 	PersistedVersion int32  `json:"persisted_version"`
-	WordSizeBytes    int    `json:"word_size_bytes"`
+	WordSizeBytes    uint32 `json:"word_size_bytes"`
 }
 
 type ExtractSummary struct {

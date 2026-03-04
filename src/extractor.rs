@@ -32,13 +32,14 @@ pub struct ExtractOptions {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ExtractIndexProperties {
     pub m: u64,
     pub ef_construction: u64,
     pub cur_element_count: u64,
     pub max_elements: u64,
     pub persisted_version: i32,
-    pub word_size_bytes: usize,
+    pub word_size_bytes: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,7 +149,7 @@ where
             cur_element_count: header.cur_element_count,
             max_elements: header.max_elements,
             persisted_version: header.persisted_version,
-            word_size_bytes: header.word_size.bytes(),
+            word_size_bytes: header.word_size.bytes() as u32,
         },
     };
 
