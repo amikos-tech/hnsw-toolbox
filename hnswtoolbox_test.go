@@ -31,21 +31,21 @@ func TestExtractResponseUnmarshalIncludesIndexProperties(t *testing.T) {
 	}
 
 	if response.Summary.IndexProperties.M != 16 {
-		t.Fatalf("M mismatch: got %d", response.Summary.IndexProperties.M)
+		t.Errorf("M mismatch: got %d", response.Summary.IndexProperties.M)
 	}
 	if response.Summary.IndexProperties.EfConstruction != 200 {
-		t.Fatalf("EfConstruction mismatch: got %d", response.Summary.IndexProperties.EfConstruction)
+		t.Errorf("EfConstruction mismatch: got %d", response.Summary.IndexProperties.EfConstruction)
 	}
 	if response.Summary.IndexProperties.CurElementCount != 10000 {
-		t.Fatalf("CurElementCount mismatch: got %d", response.Summary.IndexProperties.CurElementCount)
+		t.Errorf("CurElementCount mismatch: got %d", response.Summary.IndexProperties.CurElementCount)
 	}
 	if response.Summary.IndexProperties.MaxElements != 12000 {
-		t.Fatalf("MaxElements mismatch: got %d", response.Summary.IndexProperties.MaxElements)
+		t.Errorf("MaxElements mismatch: got %d", response.Summary.IndexProperties.MaxElements)
 	}
 	if response.Summary.IndexProperties.PersistedVersion != 1 {
-		t.Fatalf("PersistedVersion mismatch: got %d", response.Summary.IndexProperties.PersistedVersion)
+		t.Errorf("PersistedVersion mismatch: got %d", response.Summary.IndexProperties.PersistedVersion)
 	}
 	if response.Summary.IndexProperties.WordSizeBytes != 8 {
-		t.Fatalf("WordSizeBytes mismatch: got %d", response.Summary.IndexProperties.WordSizeBytes)
+		t.Errorf("WordSizeBytes mismatch: got %d", response.Summary.IndexProperties.WordSizeBytes)
 	}
 }
