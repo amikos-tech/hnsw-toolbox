@@ -20,6 +20,15 @@ Optional metadata join from `index_metadata.pickle`:
 - `user_id`
 - `seq_id`
 
+Extract summary also includes `index_properties` sourced from `header.bin`:
+
+- `m`
+- `ef_construction`
+- `cur_element_count`
+- `max_elements`
+- `persisted_version`
+- `word_size_bytes`
+
 Output format:
 
 - `parquet`
@@ -101,7 +110,15 @@ Parquet/Arrow exports.
     "scanned": 10000,
     "emitted": 8000,
     "deleted_skipped": 2000,
-    "dimension": 384
+    "dimension": 384,
+    "index_properties": {
+      "m": 16,
+      "ef_construction": 200,
+      "cur_element_count": 10000,
+      "max_elements": 12000,
+      "persisted_version": 1,
+      "word_size_bytes": 8
+    }
   }
 }
 ```
